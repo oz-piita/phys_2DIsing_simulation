@@ -4,14 +4,19 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"strconv"
 	"time"
+
+	"encoding/csv"
+	"log"
+	"os"
 )
 
 // グリッドNと外部磁場h
 const Nx, Ny, h = 100, 100, 0.01
 
-// 逆温度beta.(0.01, 5.0)の範囲で十点
-var betas []float64 = []float64{0.2, 0.7, 1.2, 1.7, 2.2, 2.7, 3.2, 3.7, 4.2, 4.9}
+// 逆温度beta.(0.01, 5.0)の範囲で10点初期化
+var betas []float64 = []float64{0.11, 0.2, 0.64, 1.17, 1.7, 2.23, 2.76, 3.29, 3.82, 4.88}
 var s = make([][]int, Nx, Ny) // spin配位
 
 func main() {
@@ -25,12 +30,12 @@ func main() {
 		s[i] = l
 	}
 	// 順に磁化、磁化の標準偏差、エネルギー、その標準偏差、比熱
-	bMag, bMag_err, bEne, bEne_err, bCap := mcmcBeta(s)
-	fmt.Println(bMag)
-	fmt.Println(bMag_err)
-	fmt.Println(bEne)
-	fmt.Println(bEne_err)
-	fmt.Println(bCap)
+	bMag, bMag_err, bEne, bEne_err, bCap, bCap_err := mcmcBeta(s)
+	fmt.Println(bMag, bMag_err)
+	fmt.Println(bEne, bEne_err)
+	fmt.Println(bCap, bCap_err)
+	// plot用にcsvを作成する
+	outputCSV(sortTo2d(bEne, bEne_err, bCap, bCap_err, bMag, bMag_err))
 }
 
 func neighborSpinSum(s [][]int, x int, y int) int {
@@ -51,8 +56,8 @@ func neighborSpinSum(s [][]int, x int, y int) int {
 	if y_bottom < 0 {
 		y_bottom += Ny
 	}
-	return s[x_right][y] + s[x_left][y] + s[x][y_above] + s[x][y_bottom]
 	// 近接スピン和
+	return s[x_right][y] + s[x_left][y] + s[x][y_above] + s[x][y_bottom]
 }
 
 func calcEnergy(s [][]int) (energy float64) {
@@ -71,19 +76,25 @@ func calcEnergy(s [][]int) (energy float64) {
 	return
 }
 
-// metropolis法で掻き乱す
-func metropolis(s [][]int, beta float64) [][]int {
+// gibbs法
+func gibbs(s [][]int, beta float64) [][]int {
 	xShuffled, yShuffled := createShuffledInt(Nx), createShuffledInt(Ny)
 	for x := range xShuffled {
 		for y := range yShuffled {
-			k := float64(neighborSpinSum(s, x, y)) + h
-			trans_prob := math.Pow(math.E, float64(-2.0*beta*float64(s[x][y])*k))
+			k := float64(neighborSpinSum(s, x, y)) - h
+			trans_prob := exp(beta*k) / (exp(beta*k) + exp(-beta*k))
 			if rand.Float64() <= trans_prob {
-				s[x][y] = -s[x][y]
+				s[x][y] = 1
+			} else {
+				s[x][y] = -1
 			}
 		}
 	}
 	return s
+}
+
+func exp(a float64) float64 {
+	return math.Pow(math.E, a)
 }
 
 // n個の連続整数の順序をランダムに入れ替えた1次元スライスを生成する
@@ -98,10 +109,11 @@ func createShuffledInt(n int) (x []int) {
 
 // マルコフ連鎖モンテカルロ法
 func mcmc(s [][]int, beta float64) (ms, energies, squareEne []float64) {
-	interval := 10
-	burn_in := 100
-	for i := 0; i < 1000; i++ {
-		s = metropolis(s, beta) // メトロポリス法で配位を確定
+	steps := 1000  // モンテカルロstep
+	interval := 10 // 実際にサンプルを採取するstep周期
+	burn_in := 100 // サンプル採取前のギブス法の実行step数.バーンイン時間
+	for i := 0; i < steps; i++ {
+		s = gibbs(s, beta) // ギブス法で配位を確定
 		if i%interval == 0 && burn_in <= i {
 			m := 0.0 // 磁化
 			for i := 0; i < Nx; i++ {
@@ -118,8 +130,8 @@ func mcmc(s [][]int, beta float64) (ms, energies, squareEne []float64) {
 	return
 }
 
-// 逆温度ごとににmcmcで物理量を取り出す
-func mcmcBeta(s [][]int) (bMag, bMag_err, bEne, bEne_err, bCap []float64) {
+// 逆温度ごとににmcmcで物理量とその標準誤差を取り出す
+func mcmcBeta(s [][]int) (bMag, bMag_err, bEne, bEne_err, bCap, bCap_err []float64) {
 	for _, beta := range betas {
 		ms, energies, square_energies := mcmc(s, beta)
 
@@ -134,7 +146,9 @@ func mcmcBeta(s [][]int) (bMag, bMag_err, bEne, bEne_err, bCap []float64) {
 		bsqene := meanFloat(square_energies)
 		bcapacity := (beta * beta) * (bsqene - benergy*benergy)
 		bCap = append(bCap, bcapacity)
-		// bCap_err = append(bCap_err,errFloat())
+
+		bCap_err = append(bCap_err, beta*beta*errFloat(square_energies))
+		// エネルギー平方からの誤差の伝播ってこれでいいのでしたっけ…自信がありません
 	}
 	return
 }
@@ -162,7 +176,37 @@ func distFloat(a []float64) float64 {
 	return d / float64(len(a))
 }
 
-// 標準”誤”差.エラーバー.
+// 標準誤差.エラーバー.
 func errFloat(a []float64) float64 {
 	return math.Sqrt(distFloat(a)) / math.Sqrt(float64(len(a)-1))
+}
+
+func sortTo2d(ene, eneErr, cap, capErr, mag, magErr []float64) [][]string {
+	records := make([][]string, 11)
+	records[0] = []string{"逆温度", "内部エネルギー", "内部エネルギー標準誤差", "比熱", "比熱標準誤差", "自発磁化", "磁化標準誤差"}
+	for i, _ := range betas {
+		r := make([]string, 7)
+		r[0] = strconv.FormatFloat(betas[i], 'f', -1, 64)
+		r[1] = strconv.FormatFloat(ene[i], 'f', -1, 64)
+		r[2] = strconv.FormatFloat(eneErr[i], 'f', -1, 64)
+		r[3] = strconv.FormatFloat(cap[i], 'f', -1, 64)
+		r[4] = strconv.FormatFloat(capErr[i], 'f', -1, 64)
+		r[5] = strconv.FormatFloat(mag[i], 'f', -1, 64)
+		r[6] = strconv.FormatFloat(magErr[i], 'f', -1, 64)
+		records[i+1] = r
+	}
+	return records
+}
+
+func outputCSV(records [][]string) {
+	f, err := os.Create("./result/gibbs.csv")
+	if err != nil {
+		log.Fatal(err)
+	}
+	w := csv.NewWriter(f)
+	w.WriteAll(records)
+	w.Flush()
+	if err := w.Error(); err != nil {
+		log.Fatal(err)
+	}
 }
