@@ -1,5 +1,7 @@
 package main
 
+// 二次元イジング模型の熱浴法（ギブスサンプリング法）
+
 import (
 	"fmt"
 	"math"
@@ -76,7 +78,7 @@ func calcEnergy(s [][]int) (energy float64) {
 	return
 }
 
-// gibbs法
+// 熱浴法.gibbs sampling method.
 func gibbs(s [][]int, beta float64) [][]int {
 	xShuffled, yShuffled := createShuffledInt(Nx), createShuffledInt(Ny)
 	for x := range xShuffled {
