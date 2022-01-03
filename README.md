@@ -15,10 +15,6 @@
 
 さらに解析解を計算して、それぞれをプロットしてみる。
 
-# Requirement
-
-* Go 1.15.2
-* GoogleColaboratry
 
 # Usage
 
@@ -34,8 +30,11 @@ go run ./meropolis/mcmc_metro.go
 go run ./gibbs/mcmc_gibbs.go
 go run ./analitics/analitical_solution.go
 ```
-
-Google colaboratryでgraph/plot_ising.ipynbを開き、Path変数を変更して実行
+上記でそれぞれの出力がresultディレクトリにcsvとして保存される。
+```bash
+python ./graph/plot_ising.py
+```
+graphディレクトリにシミュレーション法3つ×物理量3種=9つのjpegファイルが生成される。
 
 # Note
 
